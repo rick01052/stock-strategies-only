@@ -5,7 +5,19 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 
+def _has_credentials() -> bool:
+    """检查是否已配置 Google Sheet 凭证"""
+    creds = os.environ.get("GOOGLE_CREDS_JSON", "").strip()
+    sheet_id = os.environ.get("GOOGLE_SHEET_ID", "").strip()
+    return bool(creds and sheet_id)
+
+
 def get_gsheet():
+    if not _has_credentials():
+        raise RuntimeError(
+            "Google Sheet 未配置：缺少 GOOGLE_CREDS_JSON 或 GOOGLE_SHEET_ID。"
+            "Watchlist / Signals / Performance 功能将停用，但不阻断其他功能。"
+        )
     creds_json = os.environ["GOOGLE_CREDS_JSON"]
     creds_dict = json.loads(creds_json)
     scopes = [
@@ -17,8 +29,20 @@ def get_gsheet():
     return gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
 
 
+def _safe_call(fn, default, *args, **kwargs):
+    """安全调用 Google Sheet 函数，凭证缺失时回退到 default"""
+    if not _has_credentials():
+        return default
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return default
+
+
 def read_watchlist() -> list[dict]:
     """從 Google Sheet Watchlist 分頁讀股票清單"""
+    if not _has_credentials():
+        return []
     sh = get_gsheet()
     ws = sh.worksheet("Watchlist")
     rows = ws.get_all_records()
@@ -31,7 +55,7 @@ def read_watchlist() -> list[dict]:
 
 def append_signals(signals: list[dict]):
     """把結果寫回 Signals 分頁"""
-    if not signals:
+    if not signals or not _has_credentials():
         return
     sh = get_gsheet()
     try:
@@ -88,6 +112,8 @@ def add_to_watchlist(stock_id: str, name: str = "") -> dict:
     若已存在且 enabled=TRUE → 不重複加，回傳 status='exists'
     若不存在 → append 新 row（enabled=TRUE）
     """
+    if not _has_credentials():
+        return {"status": "no_credentials", "stock_id": stock_id, "name": name}
     sh = get_gsheet()
     ws = sh.worksheet("Watchlist")
     headers = _ensure_watchlist_headers(ws)
@@ -125,6 +151,8 @@ def add_to_watchlist(stock_id: str, name: str = "") -> dict:
 
 def remove_from_watchlist(stock_id: str) -> dict:
     """把 Watchlist 該 stock_id 的 enabled 改成 FALSE（軟刪除，保留歷史）"""
+    if not _has_credentials():
+        return {"status": "no_credentials", "stock_id": stock_id}
     sh = get_gsheet()
     ws = sh.worksheet("Watchlist")
     headers = _ensure_watchlist_headers(ws)
@@ -145,6 +173,8 @@ def read_latest_signals(limit: int = 50) -> list[dict]:
 
     若該分頁不存在 → 回空 list（代表還沒跑過）
     """
+    if not _has_credentials():
+        return []
     sh = get_gsheet()
     try:
         ws = sh.worksheet("Signals")
@@ -167,6 +197,8 @@ PERFORMANCE_HEADERS = [
 
 def read_performance() -> list[dict]:
     """讀取 Performance 分頁的所有追蹤紀錄（若尚未建立則回空 list）"""
+    if not _has_credentials():
+        return []
     sh = get_gsheet()
     try:
         ws = sh.worksheet("Performance")
@@ -177,6 +209,8 @@ def read_performance() -> list[dict]:
 
 def write_performance(records: list[dict]):
     """整張 Performance 分頁清空重寫（紀錄數不多，效率 OK）"""
+    if not _has_credentials():
+        return
     sh = get_gsheet()
     try:
         ws = sh.worksheet("Performance")
